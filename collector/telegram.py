@@ -36,6 +36,8 @@ def parse_page(src, channel):
             'text': text,
             'photos': re.findall(r"tgme_widget_message_photo_wrap[^>]*background-image:url\('([^']+)'\)", body),
             'video': 'tgme_widget_message_video_player' in body,
+            # cover frame of a video; a channel that posts only reels has no other picture
+            'thumbs': re.findall(r"tgme_widget_message_video_thumb[^>]*background-image:url\('([^']+)'\)", body),
             'views': views.group(1) if views else None,
             'date': date.group(1) if date else None,
             'reply_to': int(reply.group(1)) if reply else None,

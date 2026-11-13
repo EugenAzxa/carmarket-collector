@@ -24,12 +24,14 @@ from datetime import datetime, timedelta, timezone
 from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import boards
 import lex_auto
 import nizherinka
 import telegram
 
-SOURCES = (lex_auto, nizherinka)
+SOURCES = (lex_auto, nizherinka, *boards.SOURCES)
 WORKERS = 6
+MAX_DELETE = 600  # files deleted on the server per run
 MAX_GONE = .5  # more posts than this vanishing at once is a Telegram glitch, not sellers deleting them
 SOLD = re.compile(r'ПРОДАН')       # capitals in the head of the post: the seller's mark, not a word in the text
 RESERVED = re.compile(r'БРОНЬ|ЗАДАТОК')
@@ -103,9 +105,24 @@ def image(job, out, media):
     return None
 
 
+GONE = ('reserved', 'sold')  # deposit taken or sold: the card stays with its mark, big photos go
+
+
 def attach_photos(car, out, media, pool):
+    """Gallery 1200 px + card 640 px. A car that opens its Telegram post, or is already under a deposit
+    or sold, needs only the card: nobody opens its gallery, so it is not kept on the server."""
     base = f"media/{car['slug']}"
     urls, reports = car.pop('_photos'), car.pop('_reports')
+    card = f'{base}/card.webp'
+    if car.get('via_channel') or car['status'] in GONE:
+        if card not in media and os.path.exists(os.path.join(out, f'{base}/00.webp')):
+            with open(os.path.join(out, f'{base}/00.webp'), 'rb') as f:
+                media[card] = save_webp(f.read(), os.path.join(out, card), 640, 72)
+        size = image((urls[0], card, 640, 72), out, media) if urls else None
+        if not size:
+            return False
+        car['card'], car['gallery'], car['reports'] = card, [{'src': card, 'w': size[0], 'h': size[1]}], []
+        return True
     jobs = [(u, f'{base}/{n:02d}.webp', 1200, 76) for n, u in enumerate(urls)]
     jobs += [(u, f'{base}/report-{n}.webp', 1200, 80) for n, u in enumerate(reports)]
     sizes = list(pool.map(lambda j: image(j, out, media), jobs))
@@ -113,13 +130,26 @@ def attach_photos(car, out, media, pool):
     car['reports'] = [j[1] for j, s in zip(jobs[len(urls):], sizes[len(urls):]) if s]
     if not car['gallery']:
         return False
-    first = car['gallery'][0]['src']
-    card, src = f'{base}/card.webp', os.path.join(out, first)
+    first, src = car['gallery'][0]['src'], os.path.join(out, car['gallery'][0]['src'])
     if card not in media and os.path.exists(src):
         with open(src, 'rb') as f:
             media[card] = save_webp(f.read(), os.path.join(out, card), 640, 72)
     car['card'] = card if card in media else first
     return True
+
+
+def trash(media, cars, soon, failed):
+    """Files on the server that no car on the site uses any more. Forgotten in `media` and listed for
+    push.py delete. Nothing is deleted when a channel failed or the run found almost no cars."""
+    keep = {u['img'] for items in soon.values() for u in items if u.get('img')}
+    for c in cars:
+        keep |= {c['card'], *(g['src'] for g in c['gallery']), *c['reports']}
+    if failed or len(cars) < 10:
+        return []
+    gone = sorted(k for k in media if k.startswith('media/') and k not in keep)[:MAX_DELETE]
+    for k in gone:
+        del media[k]
+    return gone
 
 
 def main():
@@ -179,9 +209,11 @@ def main():
     write_atomic(os.path.join(a.out, 'assets', 'js', 'cars.js'), js)
     write_atomic(a.review or os.path.join(os.path.dirname(a.state) or '.', 'review.json'),
                  json.dumps(review, ensure_ascii=False, indent=1))
+    gone = trash(media, ready, soon, failed)
+    write_atomic(os.path.join(os.path.dirname(a.state) or '.', 'delete.json'), json.dumps(gone))
     write_atomic(a.state, json.dumps(state, ensure_ascii=False))
     print(f"cars {len(ready)}, reserved {sum(c['status'] == 'reserved' for c in ready)}, "
-          f'upcoming {sum(len(u) for u in soon.values())}, review {len(review)}, failed {failed}')
+          f'upcoming {sum(len(u) for u in soon.values())}, review {len(review)}, to delete {len(gone)}, failed {failed}')
     sys.exit(1 if failed else 0)
 
 

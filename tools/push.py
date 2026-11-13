@@ -8,6 +8,7 @@ SSH and FTP on SpaceWeb do not answer from abroad, HTTPS does. Stdlib only.
   push.py data FILE...                   send state.json / review.json to ../carmarket-data
   push.py get NAME OUT                   download state.json or review.json (prints "none" if absent)
   push.py ping                           PHP version and upload limits
+  push.py delete LIST.json               delete old media files listed by the collector (media/... only)
   push.py indexnow [PATH...]             tell Yandex (IndexNow) about new or changed pages; no PATH = whole sitemap.xml
 
 Token: env CM_DEPLOY_TOKEN or .env.local. Site: env CM_SITE (default https://машиныпонизурынка.рф).
@@ -58,17 +59,22 @@ def post(fields, file_bytes=None, timeout=300):
     body.write(f'--{b}--\r\n'.encode())
     req = urllib.request.Request(SITE + '/cm-deploy.php', data=body.getvalue(), method='POST', headers={
         'Content-Type': f'multipart/form-data; boundary={b}', 'X-Deploy-Token': token(), 'User-Agent': 'carmarket-deploy'})
-    for attempt in range(3):
+    for attempt in range(4):
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 return r.status, r.read()
         except urllib.error.HTTPError as e:
-            return e.code, e.read()
+            body = e.read()
+            # SpaceWeb now and then answers with its own page ("Spaceweb. Всё будет хорошо!", 415/5xx)
+            # instead of reaching cm-deploy.php (13.11.2026): wait and ask again. Our own errors are text.
+            if attempt == 3 or not (e.code in (415, 429) or e.code >= 500 or body.lstrip()[:1] == b'<'):
+                return e.code, body
+            print(f'retry after HTTP {e.code} from the hosting', file=sys.stderr)
         except (urllib.error.URLError, TimeoutError) as e:
-            if attempt == 2:
+            if attempt == 3:
                 raise
             print('retry after', e, file=sys.stderr)
-            time.sleep(5 * (attempt + 1))
+        time.sleep(10 * (attempt + 1))
 
 
 def files_in(d):
@@ -203,6 +209,14 @@ def main(a):
         if code != 200:
             sys.exit(f'data upload failed {code}: {body[:300]!r}')
         print('data ok', [n for n, _ in items])
+    elif c == 'delete':
+        names = json.load(open(a[1])) if os.path.exists(a[1]) else []
+        for i in range(0, len(names), 200):
+            code, body = post({'action': 'delete', 'names': json.dumps(names[i:i + 200])})
+            if code != 200:
+                sys.exit(f'delete failed {code}: {body[:300]!r}')
+            print(body.decode().strip())
+        print('delete ok,', len(names), 'listed')
     elif c == 'site':
         if '--code' in a:
             with tempfile.TemporaryDirectory() as tmp:
