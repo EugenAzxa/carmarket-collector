@@ -42,7 +42,7 @@ def load_state(path):
         return {'channels': {}, 'media': {}, 'rechecked': None}  # first run: every post is read fresh
     with open(path, encoding='utf-8') as f:
         state = json.load(f)
-    return {'channels': state.get('channels', {}), 'media': state.get('media', {}), 'rechecked': state.get('rechecked')}
+    return {'channels': state.get('channels', {}), 'media': state.get('media', {}), 'rechecked': state.get('rechecked'), 'checked': state.get('checked', {})}
 
 
 def merge_recheck(posts, fresh):
@@ -167,6 +167,7 @@ def main():
     now = datetime.now(timezone.utc)
     for src in SOURCES:
         posts = {int(k): v for k, v in state['channels'].get(src.CHANNEL, {}).items()}
+        last = max(posts, default=0)
         try:
             if a.recheck and posts:
                 posts, removed = merge_recheck(posts, telegram.fetch(src.CHANNEL, min(posts), a.max_pages))
@@ -188,6 +189,12 @@ def main():
         cars += c
         soon[src.SELLER] = u
         review += r
+        # one line per channel in the run log: every channel is read every run, a silent one shows here
+        newest = max((p['date'] for p in posts.values() if p['date']), default=None)
+        quiet = f', тишина {(now - datetime.fromisoformat(newest)).days} дн.' if newest and now - datetime.fromisoformat(newest) > timedelta(days=3) else ''
+        state.setdefault('checked', {})[src.CHANNEL] = {'at': now.isoformat(timespec='seconds'), 'ok': src.CHANNEL not in failed, 'newest': newest}
+        print(f"  {src.CHANNEL}: {'НЕ ПРОЧИТАН' if src.CHANNEL in failed else 'ok'}, новых постов {sum(k > last for k in posts)}, "
+              f"машин {len(c)}, последний пост {newest[:16] if newest else 'нет за ' + str(src.KEEP_DAYS) + ' дн.'}{quiet}")
 
     ready = []
     with ThreadPoolExecutor(WORKERS) as pool:
