@@ -44,3 +44,7 @@ jobs:
           test -f out/assets/js/cars.js || exit 0
           python3 tools/push.py site out
           python3 tools/push.py data work/state.json work/review.json
+      - name: Delete old photos
+        # after cars.js is on the server, so the site never points to a deleted file
+        if: success()
+        run: python3 tools/push.py delete work/delete.json
