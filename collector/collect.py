@@ -122,6 +122,7 @@ def attach_photos(car, out, media, pool):
         if not size:
             return False
         car['card'], car['gallery'], car['reports'] = card, [{'src': card, 'w': size[0], 'h': size[1]}], []
+        car['via_channel'] = True  # the card opens the Telegram post, there is no page with photos any more
         return True
     jobs = [(u, f'{base}/{n:02d}.webp', 1200, 76) for n, u in enumerate(urls)]
     jobs += [(u, f'{base}/report-{n}.webp', 1200, 80) for n, u in enumerate(reports)]
