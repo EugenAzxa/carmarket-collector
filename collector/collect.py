@@ -153,6 +153,21 @@ def trash(media, cars, soon, failed):
     return gone
 
 
+MARKUP = re.compile(r'[<>"`\\]')
+SAFE_URL = re.compile(r'^https://(?:t\.me|autoteka\.ru)/[\w\-/?=&.+%]*$')
+
+
+def defang(x):
+    """Text comes from other people's posts. The site escapes it on every page; this is the second
+    lock: no markup characters in any string and only Telegram/Autoteka links in URL fields."""
+    if isinstance(x, dict):
+        return {k: (v if not isinstance(v, str) or not k in ('source', 'invite', 'autoteka_url') or SAFE_URL.match(v) else None)
+                if k in ('source', 'invite', 'autoteka_url') else defang(v) for k, v in x.items()}
+    if isinstance(x, list):
+        return [defang(v) for v in x]
+    return MARKUP.sub('', x) if isinstance(x, str) else x
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--state', required=True)
@@ -207,6 +222,8 @@ def main():
             for u in items:
                 rel = f"media/upcoming-{u['id']}.webp"
                 u['img'] = rel if image((u.pop('_photo'), rel, 1200, 76), a.out, media) else None
+    ready = [defang(c) for c in ready if SAFE_URL.match(c.get('source') or '')]
+    soon = {k: [defang(u) for u in v] for k, v in soon.items()}
     ready.sort(key=lambda c: c['date'], reverse=True)
     if (a.recheck or not state['rechecked']) and not failed:
         state['rechecked'] = now.isoformat(timespec='seconds')
