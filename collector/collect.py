@@ -172,7 +172,9 @@ def main():
                 posts, removed = merge_recheck(posts, telegram.fetch(src.CHANNEL, min(posts), a.max_pages))
                 print(f'{src.CHANNEL}: rechecked {len(posts)} posts, {removed} deleted by the seller')
             else:
-                posts.update(telegram.fetch(src.CHANNEL, max(posts, default=0), a.max_pages))
+                # a channel seen for the first time is read only as deep as its cars are kept
+                since = None if posts else now - timedelta(days=src.KEEP_DAYS)
+                posts.update(telegram.fetch(src.CHANNEL, max(posts, default=0), a.max_pages, since))
         except Exception as e:
             print(f'{src.CHANNEL}: {e}', file=sys.stderr)
             failed.append(src.CHANNEL)

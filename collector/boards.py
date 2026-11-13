@@ -1,4 +1,4 @@
-"""Reseller channels written in free text (since 13.11.2026): AMSTEPDAM, АвтоБутик74, DESHMAN_AUTO, EVGEN AVTO.
+"""Reseller channels written in free text (since 13.11.2026): 18 channels, list in SOURCES at the bottom.
 
 One rule set, small differences per channel in SOURCES at the bottom. Like the board channel, a car
 here is one card that opens its post: phones, VIN, addresses and names never leave this file.
@@ -18,12 +18,13 @@ from build_data import BODY, HIST, TECH, clean, paint_map
 
 import nizherinka as nz
 
-UNIT = r'(к|тыс|млн|🍋|₽|р)?'
+UNIT = r'(к|k|тыс|млн|🍋|₽|р)?'
 NUM = r'(\d[\d\s.,]*\d|\d)'
 PRICE = [re.compile(p, re.I | re.S) for p in (
     r'(?:мо[яю]|наш[аеу])\s+цен[аеу][^\d]{0,40}?' + NUM + r'\s*' + UNIT,
     r'(?<![а-яё])цен(?:[аеу]|ник)(?![а-яё])[^\d]{0,40}?' + NUM + r'\s*' + UNIT,
     r'(?<![\wа-яё])за\s+' + NUM + r'\s*' + UNIT + r'(?![\wа-яё])',
+    r'(?m)^[^\w\n]*' + NUM + r'\s*(к|k|тыс)?\s*(?:₽|руб)',  # a line with only the price: "💵255.000₽", "🔥485k ₽🔥"
 )]
 MARKET = re.compile(r'(?:рын(?:ок|очн\w*)|оценк\w*|стоимост\w*|старт цен\w*)[^\d\n]{0,30}' + NUM + r'\s*' + UNIT, re.I)
 MARKET_LINE = re.compile(r'рын(?:ок|очн)|оценк|стоимост|старт цен|запас|зазор', re.I)
@@ -33,12 +34,18 @@ SOLD = re.compile(r'(?<![а-яё])продан[аыо]?(?![а-яё])', re.I)
 HIDDEN = re.compile(r'\bVIN\b|\b[A-HJ-NPR-Z0-9]{17}\b|\bул\.|улиц|адрес|☎|📲|звонк|t\.me/|https?://|кредит', re.I)
 CITY = re.compile(r'\bг\.\s?[А-ЯЁ][а-яё]')  # "г.Казань", case matters: "2013г.в" is a year
 PROMO = re.compile(r'розыгр|Условия максимально|подписан\w* на наши каналы|курс', re.I)
-RU_MODELS = {'круз': 'Cruze', 'лачетти': 'Lacetti', 'авео': 'Aveo', 'солярис': 'Solaris', 'рио': 'Rio', 'поло': 'Polo',
-             'фокус': 'Focus', 'октавия': 'Octavia', 'камри': 'Camry', 'королла': 'Corolla', 'ланцер': 'Lancer',
-             'аутлендер': 'Outlander', 'спектра': 'Spectra', 'церато': 'Cerato', 'спортейдж': 'Sportage', 'туссан': 'Tucson',
-             'крета': 'Creta', 'элантра': 'Elantra', 'джетта': 'Jetta', 'пассат': 'Passat', 'тигуан': 'Tiguan', 'логан': 'Logan',
-             'дастер': 'Duster', 'сандеро': 'Sandero', 'меган': 'Megane', 'астра': 'Astra', 'корса': 'Corsa', 'мондео': 'Mondeo',
-             'кашкай': 'Qashqai', 'альмера': 'Almera', 'теана': 'Teana', 'тиида': 'Tiida', 'нексия': 'Nexia', 'матиз': 'Matiz'}
+RU_MODELS = {'рав ?4': 'RAV4', 'гранд витара': 'Grand Vitara', 'витара': 'Vitara', 'тус+ан': 'Tucson', 'санта фе': 'Santa Fe',
+             'ленд крузер прадо|прадо': 'Land Cruiser Prado', 'ленд крузер|крузер|крузак': 'Land Cruiser', 'х-?трейл|икс-?трейл': 'X-Trail',
+             'паджеро спорт': 'Pajero Sport', 'паджеро': 'Pajero', 'аутлендер': 'Outlander', 'ланцер': 'Lancer', 'аккорд': 'Accord',
+             'цивик': 'Civic', 'гольф': 'Golf', 'туарег': 'Touareg', 'тигуан': 'Tiguan', 'пассат': 'Passat', 'джетта': 'Jetta',
+             'поло': 'Polo', 'мурано': 'Murano', 'террано': 'Terrano', 'кашкай': 'Qashqai', 'альмера': 'Almera', 'теана': 'Teana',
+             'тиида': 'Tiida', 'ноут': 'Note', 'соренто': 'Sorento', 'спортейдж': 'Sportage', 'церато': 'Cerato', 'сид': 'Ceed',
+             'оптима': 'Optima', 'спектра': 'Spectra', 'рио': 'Rio', 'солярис': 'Solaris', 'крета': 'Creta', 'элантра': 'Elantra',
+             'круз': 'Cruze', 'лачетти': 'Lacetti', 'авео': 'Aveo', 'нива шевроле|нива': 'Niva', 'камри': 'Camry', 'королла': 'Corolla',
+             'фокус': 'Focus', 'мондео': 'Mondeo', 'куга': 'Kuga', 'октавия': 'Octavia', 'рапид': 'Rapid', 'логан': 'Logan',
+             'дастер': 'Duster', 'сандеро': 'Sandero', 'каптюр|каптур': 'Kaptur', 'меган': 'Megane', 'астра': 'Astra', 'корса': 'Corsa',
+             'нексия': 'Nexia', 'матиз': 'Matiz', 'патриот': 'Patriot', 'хантер': 'Hunter', 'гранта': 'Granta', 'веста': 'Vesta',
+             'приора': 'Priora', 'калина': 'Kalina', 'ларгус': 'Largus', 'иксрей': 'XRAY', 'газель': 'Газель', 'буханка': 'Буханка'}
 LADA = re.compile(r'granta|гранта|vesta|веста|priora|приора|kalina|калина|largus|ларгус|xray|niva|нива|4x4', re.I)
 MODEL_ONLY = {  # the brand is often left out: "LANCER 2005 г.в", "Escalade за 2.250"
     'lancer': ('Mitsubishi', 'Lancer'), 'pajero': ('Mitsubishi', 'Pajero'), 'outlander': ('Mitsubishi', 'Outlander'),
@@ -60,7 +67,7 @@ TRANS = dict(zip('абвгдеёжзийклмнопрстуфхцчшщъыьэ
 
 def rub(s, unit=''):
     """"209.900к", "1.199.999", "1.5🍋", "2.250", "350" -> rubles. Sellers drop the thousands."""
-    s, unit = s.strip(' .,'), (unit or '').lower()
+    s, unit = s.strip(' .,'), (unit or '').lower().replace('k', 'к')
     if unit in ('млн', '🍋') and re.fullmatch(r'\d{1,2}(?:[.,]\d{1,3})?', s):
         return round(float(s.replace(',', '.')) * 1_000_000)
     v = int(re.sub(r'\D', '', s) or 0)
@@ -103,12 +110,16 @@ def name_of(lines):
             if m:
                 model = nz.tidy(nz.CUT.sub('', s[m.end():]))
                 if make == 'Lada' and LADA.search(s):
-                    model = LADA.search(s).group(0).capitalize().replace('Гранта', 'Granta').replace('Веста', 'Vesta')
+                    model = ru_model(LADA.search(s).group(0)) or LADA.search(s).group(0).capitalize()
                 model = re.sub(r'(?i)^([a-z])\s*-?\s*kla(?:ss|sse)\b', lambda x: x.group(1).upper() + '-класс', model.split('!')[0])
                 model = re.sub(r'\s+\d\.\d\w*.*$', '', model).strip(' -:,.!')
-                model = RU_MODELS.get(model.lower(), model)
+                model = ru_model(model) or model
+                model = re.sub(r'(?i)^benz\s+', '', model)
                 if re.search(r'[A-Za-z0-9]', model):  # "X3 кузове F25" -> "X3"
                     model = ' '.join(w for w in model.split() if not re.search(r'[а-яёА-ЯЁ]', w) or w.endswith('-класс'))
+                elif make not in ('Lada', 'УАЗ', 'ГАЗ'):
+                    model = ''  # "Suzuki СНИЖЕНИЕ", "BMW на Авито": not a model
+                model = ' '.join(w[0].upper() + w[1:] if w[0].islower() and re.match('[a-z]', w) else w for w in model.split())
                 model = ' '.join(w.upper() if re.search(r'\d', w) and len(w) <= 6 else w for w in model.split())
                 if model:
                     return make, model
@@ -117,6 +128,14 @@ def name_of(lines):
             if re.search(rf'(?<![\wа-яё]){word}', low):
                 return pair
     return None, None
+
+
+def ru_model(text):
+    low = text.lower().strip()
+    for k, v in RU_MODELS.items():
+        if re.match(rf'(?:{k})(?![а-яё])', low):
+            return v
+    return None
 
 
 def year_of(lines):
@@ -275,4 +294,19 @@ SOURCES = (
     source('avtodarom74', 'avtobutik74'),
     source('deshman_autokzn', 'deshman-auto'),
     source('evgenavtooo', 'evgen-avto', min_text=60, year_optional=True),  # reels with a short caption
+    # second batch, 13.11.2026
+    source('livocars', 'livo-cars'),
+    source('oleg_auto_import', 'oleg-auto'),
+    source('kupil_prodal495', 'kupil-prodal'),
+    source('Cenzura_Auto', 'perekup-bez-cenzury'),
+    source('TFKavto', 'tfk-avto'),
+    source('KSSAuto', 'kss-auto'),
+    source('prodajaobmmeen', 'nazauto'),
+    source('dab_auto', 'dab-auto'),
+    source('qavarsky', 'qavarsky'),
+    source('na_perekidauto', 'avtotekar'),
+    source('petrovvavto', 'petrovv-avto'),
+    source('perecupskostey', 'kostya-v-dele'),
+    source('Auto2D181', '2d-auto'),
+    source('evanperekup', 'evan-perekup'),
 )

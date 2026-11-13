@@ -3,6 +3,7 @@ import html
 import re
 import time
 import urllib.request
+from datetime import datetime
 
 UA = 'Mozilla/5.0'
 PAUSE = 1.5  # seconds between pages
@@ -45,8 +46,9 @@ def parse_page(src, channel):
     return posts
 
 
-def fetch(channel, after=0, max_pages=40):
-    """Walk the channel back from the newest post until `after`. Raises if nothing could be read."""
+def fetch(channel, after=0, max_pages=40, since=None):
+    """Walk the channel back from the newest post until `after` (or posts older than `since`, a datetime).
+    Raises if nothing could be read."""
     posts, before = {}, None
     for _ in range(max_pages):
         url = f'https://t.me/s/{channel}' + (f'?before={before}' if before else '')
@@ -56,6 +58,9 @@ def fetch(channel, after=0, max_pages=40):
         posts.update(page)
         before = min(page)
         if before <= after:
+            break
+        dates = [p['date'] for p in page.values() if p['date']]
+        if since and dates and datetime.fromisoformat(min(dates)) < since:
             break
         time.sleep(PAUSE)
     if not posts:
