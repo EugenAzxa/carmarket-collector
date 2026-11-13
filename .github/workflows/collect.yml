@@ -1,0 +1,46 @@
+# Runs outside Russia: Telegram does not open from the site's server.
+# Needs secret CM_DEPLOY_TOKEN. Files go over HTTPS to the site with tools/push.py.
+name: Collect cars
+
+on:
+  # Main trigger: the site server's Crontab starts this workflow through the API
+  # (GitHub runs its own cron hours late and drops the frequent ones).
+  workflow_dispatch:
+    inputs:
+      recheck:
+        description: 'Full recheck: re-read every kept post (what sold, what was deleted)'
+        type: boolean
+        default: false
+  schedule:
+    # Fallback only, in case the server alarm stops. Odd minutes, GitHub is busiest at :00.
+    - cron: '17 1 * * *'   # ~04:17 MSK
+    - cron: '43 10 * * *'  # ~13:43 MSK
+
+concurrency:
+  group: collect
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CM_DEPLOY_TOKEN: ${{ secrets.CM_DEPLOY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --quiet pillow
+      - name: Get state
+        run: |
+          mkdir -p work out
+          python3 tools/push.py get state.json work/state.json
+      - name: Collect
+        run: python3 collector/collect.py --state work/state.json --review work/review.json --out out ${{ inputs.recheck && '--recheck' || '' }}
+      - name: Send to the server
+        if: always()
+        run: |
+          test -f out/assets/js/cars.js || exit 0
+          python3 tools/push.py site out
+          python3 tools/push.py data work/state.json work/review.json

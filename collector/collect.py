@@ -1,0 +1,189 @@
+"""Collect cars from Telegram and write what the site needs.
+
+Usage:
+  python3 collector/collect.py --state <state.json> --out <dir> [--review <review.json>] [--recheck]
+
+A normal run reads only posts newer than the last one seen. --recheck (twice a day) reads every post we
+still keep: sellers often write "ПРОДАНО" into the old listing or delete it, and no new post says so.
+
+Writes <dir>/assets/js/cars.js and <dir>/media/<slug>/*.webp. Posts we could not read go to
+review.json next to the state file, outside the site. If a channel does not answer, its cars
+stay as they were and the run exits with an error: a network failure never takes cars off the site.
+"""
+import argparse
+import io
+import json
+import os
+import re
+import sys
+import tempfile
+import time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
+
+from PIL import Image
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import lex_auto
+import nizherinka
+import telegram
+
+SOURCES = (lex_auto, nizherinka)
+WORKERS = 6
+MAX_GONE = .5  # more posts than this vanishing at once is a Telegram glitch, not sellers deleting them
+SOLD = re.compile(r'ПРОДАН')       # capitals in the head of the post: the seller's mark, not a word in the text
+RESERVED = re.compile(r'БРОНЬ|ЗАДАТОК')
+
+
+def load_state(path):
+    if not os.path.exists(path):
+        return {'channels': {}, 'media': {}, 'rechecked': None}  # first run: every post is read fresh
+    with open(path, encoding='utf-8') as f:
+        state = json.load(f)
+    return {'channels': state.get('channels', {}), 'media': state.get('media', {}), 'rechecked': state.get('rechecked')}
+
+
+def merge_recheck(posts, fresh):
+    """Kept posts after a full re-read: edits replace the text, deleted posts go away.
+    Only the range the re-read really covered counts, and a mass disappearance is ignored."""
+    if not fresh:
+        return dict(posts), 0
+    low = min(fresh)
+    gone = [k for k in posts if k >= low and k not in fresh]
+    merged = {**posts, **fresh}
+    if len(gone) > len(posts) * MAX_GONE:
+        print(f'recheck: {len(gone)} of {len(posts)} posts missing, keeping them', file=sys.stderr)
+        return merged, 0
+    for k in gone:
+        del merged[k]
+    return merged, len(gone)
+
+
+def edited_status(text, status):
+    """Status from a mark the seller put at the top of the listing itself."""
+    head = text[:120]
+    if SOLD.search(head):
+        return 'sold'
+    if status == 'active' and RESERVED.search(head):
+        return 'reserved'
+    return status
+
+
+def write_atomic(path, text):
+    os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or '.')
+    with os.fdopen(fd, 'w', encoding='utf-8') as f:
+        f.write(text)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, path)
+
+
+def save_webp(data, path, size, q):
+    im = Image.open(io.BytesIO(data)).convert('RGB')
+    im.thumbnail((size, size), Image.LANCZOS)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    im.save(path, 'WEBP', quality=q, method=4)
+    return list(im.size)
+
+
+def image(job, out, media):
+    """Telegram links expire within days, so a file is stored the first time we see it.
+    `media` remembers what is already on the server: the machine running this starts empty."""
+    url, rel, size, q = job
+    if rel in media:
+        return media[rel]
+    for attempt in range(3):  # the CDN answers 500 now and then
+        try:
+            media[rel] = save_webp(telegram.get(url), os.path.join(out, rel), size, q)
+            return media[rel]
+        except Exception as e:
+            err = e
+            time.sleep(2)
+    print(f'photo failed {rel}: {err}', file=sys.stderr)
+    return None
+
+
+def attach_photos(car, out, media, pool):
+    base = f"media/{car['slug']}"
+    urls, reports = car.pop('_photos'), car.pop('_reports')
+    jobs = [(u, f'{base}/{n:02d}.webp', 1200, 76) for n, u in enumerate(urls)]
+    jobs += [(u, f'{base}/report-{n}.webp', 1200, 80) for n, u in enumerate(reports)]
+    sizes = list(pool.map(lambda j: image(j, out, media), jobs))
+    car['gallery'] = [{'src': j[1], 'w': s[0], 'h': s[1]} for j, s in zip(jobs[:len(urls)], sizes) if s]
+    car['reports'] = [j[1] for j, s in zip(jobs[len(urls):], sizes[len(urls):]) if s]
+    if not car['gallery']:
+        return False
+    first = car['gallery'][0]['src']
+    card, src = f'{base}/card.webp', os.path.join(out, first)
+    if card not in media and os.path.exists(src):
+        with open(src, 'rb') as f:
+            media[card] = save_webp(f.read(), os.path.join(out, card), 640, 72)
+    car['card'] = card if card in media else first
+    return True
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--state', required=True)
+    ap.add_argument('--out', required=True)
+    ap.add_argument('--review')
+    ap.add_argument('--max-pages', type=int, default=40)
+    ap.add_argument('--recheck', action='store_true', help='re-read every kept post, not only new ones')
+    a = ap.parse_args()
+
+    state = load_state(a.state)
+    media, cars, soon, review, failed = state['media'], [], {}, [], []
+    now = datetime.now(timezone.utc)
+    for src in SOURCES:
+        posts = {int(k): v for k, v in state['channels'].get(src.CHANNEL, {}).items()}
+        try:
+            if a.recheck and posts:
+                posts, removed = merge_recheck(posts, telegram.fetch(src.CHANNEL, min(posts), a.max_pages))
+                print(f'{src.CHANNEL}: rechecked {len(posts)} posts, {removed} deleted by the seller')
+            else:
+                posts.update(telegram.fetch(src.CHANNEL, max(posts, default=0), a.max_pages))
+        except Exception as e:
+            print(f'{src.CHANNEL}: {e}', file=sys.stderr)
+            failed.append(src.CHANNEL)
+        edge = now - timedelta(days=src.KEEP_DAYS)
+        posts = {k: p for k, p in posts.items() if p['date'] and datetime.fromisoformat(p['date']) >= edge}
+        state['channels'][src.CHANNEL] = posts
+        c, u, r = src.build(posts)
+        for car in c:
+            if car['id'] in posts:
+                car['status'] = edited_status(posts[car['id']]['text'], car['status'])
+        cars += c
+        soon[src.SELLER] = u
+        review += r
+
+    ready = []
+    with ThreadPoolExecutor(WORKERS) as pool:
+        for car in cars:
+            if attach_photos(car, a.out, media, pool):
+                ready.append(car)
+            else:
+                review.append({'id': car['id'], 'why': 'нет фото', 'text': car['source']})
+        for items in soon.values():
+            for u in items:
+                rel = f"media/upcoming-{u['id']}.webp"
+                u['img'] = rel if image((u.pop('_photo'), rel, 1200, 76), a.out, media) else None
+    ready.sort(key=lambda c: c['date'], reverse=True)
+    if (a.recheck or not state['rechecked']) and not failed:
+        state['rechecked'] = now.isoformat(timespec='seconds')
+
+    js = ('// Generated by collector/collect.py - do not edit by hand\nwindow.CARS = '
+          + json.dumps(ready, ensure_ascii=False, indent=1) + ';\nwindow.UPCOMING = '
+          + json.dumps(soon, ensure_ascii=False, indent=1) + ';\nwindow.UPDATED_AT = '
+          + json.dumps(now.isoformat(timespec='seconds')) + ';\nwindow.RECHECKED_AT = '
+          + json.dumps(state['rechecked']) + ';\n')
+    write_atomic(os.path.join(a.out, 'assets', 'js', 'cars.js'), js)
+    write_atomic(a.review or os.path.join(os.path.dirname(a.state) or '.', 'review.json'),
+                 json.dumps(review, ensure_ascii=False, indent=1))
+    write_atomic(a.state, json.dumps(state, ensure_ascii=False))
+    print(f"cars {len(ready)}, reserved {sum(c['status'] == 'reserved' for c in ready)}, "
+          f'upcoming {sum(len(u) for u in soon.values())}, review {len(review)}, failed {failed}')
+    sys.exit(1 if failed else 0)
+
+
+if __name__ == '__main__':
+    main()
