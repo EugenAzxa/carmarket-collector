@@ -42,7 +42,10 @@ def load_state(path):
         return {'channels': {}, 'media': {}, 'rechecked': None}  # first run: every post is read fresh
     with open(path, encoding='utf-8') as f:
         state = json.load(f)
-    return {'channels': state.get('channels', {}), 'media': state.get('media', {}), 'rechecked': state.get('rechecked'), 'checked': state.get('checked', {})}
+    out = {'channels': state.get('channels', {}), 'media': state.get('media', {}), 'rechecked': state.get('rechecked'), 'checked': state.get('checked', {})}
+    if 'notified' in state:  # absent = push notifications never ran: the first run only remembers
+        out['notified'] = state['notified']
+    return out
 
 
 def merge_recheck(posts, fresh):
@@ -168,6 +171,24 @@ def defang(x):
     return MARKUP.sub('', x) if isinstance(x, str) else x
 
 
+NOTIFY_HOURS = 6  # a car older than this is not news any more (a channel added later, a long outage)
+
+
+def new_cars(state, ready, now):
+    """Cars for push notifications (tools/notify.py): free, not announced before, posted recently.
+    The very first run only remembers what is already on the site, so nobody gets a flood."""
+    first = 'notified' not in state
+    seen = set(state.get('notified', []))
+    state['notified'] = sorted(c['slug'] for c in ready)
+    if first:
+        return []
+    return [{'slug': c['slug'], 'title': f"{c['make']} {c['model']}" + (f" {c['year']}" if c.get('year') else ''),
+             'price': c['price'], 'market': c.get('market') or c.get('avito'), 'gap': c.get('gap'), 'card': c.get('card'),
+             'seller': c['seller']}
+            for c in ready if c['slug'] not in seen and c['status'] == 'active'
+            and now - datetime.fromisoformat(c['date']) <= timedelta(hours=NOTIFY_HOURS)]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--state', required=True)
@@ -225,6 +246,8 @@ def main():
     ready = [defang(c) for c in ready if SAFE_URL.match(c.get('source') or '')]
     soon = {k: [defang(u) for u in v] for k, v in soon.items()}
     ready.sort(key=lambda c: c['date'], reverse=True)
+    news = new_cars(state, ready, now)
+    write_atomic(os.path.join(os.path.dirname(a.state) or '.', 'notify.json'), json.dumps(news, ensure_ascii=False))
     if (a.recheck or not state['rechecked']) and not failed:
         state['rechecked'] = now.isoformat(timespec='seconds')
 
@@ -240,7 +263,7 @@ def main():
     write_atomic(os.path.join(os.path.dirname(a.state) or '.', 'delete.json'), json.dumps(gone))
     write_atomic(a.state, json.dumps(state, ensure_ascii=False))
     print(f"cars {len(ready)}, reserved {sum(c['status'] == 'reserved' for c in ready)}, "
-          f'upcoming {sum(len(u) for u in soon.values())}, review {len(review)}, to delete {len(gone)}, failed {failed}')
+          f'upcoming {sum(len(u) for u in soon.values())}, review {len(review)}, to delete {len(gone)}, to notify {len(news)}, failed {failed}')
     sys.exit(1 if failed else 0)
 
 
