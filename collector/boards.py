@@ -18,7 +18,7 @@ from build_data import BODY, HIST, TECH, clean, paint_map
 
 import nizherinka as nz
 
-UNIT = r'(к|k|тыс|млн|🍋|₽|р)?'
+UNIT = r'(к|k|тыс|млн|миллион\w*|🍋|₽|р)?'
 NUM = r'(\d[\d\s.,]*\d|\d)'
 PRICE = [re.compile(p, re.I | re.S) for p in (
     r'(?:мо[яю]|наш[аеу])\s+цен[аеу][^\d]{0,40}?' + NUM + r'\s*' + UNIT,
@@ -56,8 +56,10 @@ MODEL_ONLY = {  # the brand is often left out: "LANCER 2005 г.в", "Escalade з
     'granta': ('Lada', 'Granta'), 'vesta': ('Lada', 'Vesta'), 'priora': ('Lada', 'Priora'),
     'ланцер': ('Mitsubishi', 'Lancer'), 'паджеро': ('Mitsubishi', 'Pajero'), 'крузак': ('Toyota', 'Land Cruiser'),
     'гелик': ('Mercedes', 'G-Класс'), 'кольт': ('Mitsubishi', 'Colt'),
+    'x3': ('BMW', 'X3'), 'x5': ('BMW', 'X5'), 'x6': ('BMW', 'X6'), 'x7': ('BMW', 'X7'),
+    'cls': ('Mercedes', 'CLS'), 'cla': ('Mercedes', 'CLA'), 'gle': ('Mercedes', 'GLE'), 'glc': ('Mercedes', 'GLC'), 'gls': ('Mercedes', 'GLS'),
 }
-MORE_BRANDS = [(r'Cadillac|Кадиллак', 'Cadillac'), (r'Genesis', 'Genesis'), (r'Exeed', 'Exeed'), (r'Changan', 'Changan'),
+MORE_BRANDS = [(r'(?-i:MB)|Мерс|Мерин', 'Mercedes'), (r'Cadillac|Кадиллак', 'Cadillac'), (r'Genesis', 'Genesis'), (r'Exeed', 'Exeed'), (r'Changan', 'Changan'),
                (r'Omoda', 'Omoda'), (r'Tank', 'Tank'), (r'Datsun|Датсун', 'Datsun'), (r'УАЗ|UAZ', 'УАЗ'),
                (r'Chrysler', 'Chrysler'), (r'Dodge', 'Dodge'), (r'Smart', 'Smart'), (r'Acura', 'Acura')]
 TRANS = dict(zip('абвгдеёжзийклмнопрстуфхцчшщъыьэюя',
@@ -68,6 +70,8 @@ TRANS = dict(zip('абвгдеёжзийклмнопрстуфхцчшщъыьэ
 def rub(s, unit=''):
     """"209.900к", "1.199.999", "1.5🍋", "2.250", "350" -> rubles. Sellers drop the thousands."""
     s, unit = s.strip(' .,'), (unit or '').lower().replace('k', 'к')
+    if unit.startswith('миллион'):
+        unit = 'млн'
     if unit in ('млн', '🍋') and re.fullmatch(r'\d{1,2}(?:[.,]\d{1,3})?', s):
         return round(float(s.replace(',', '.')) * 1_000_000)
     v = int(re.sub(r'\D', '', s) or 0)
@@ -103,6 +107,8 @@ def follow_price(text):
 
 def name_of(lines):
     lines = [re.sub(r'\((?:LADA|ЛАДА|ВАЗ)\)', ' ', l, flags=re.I) for l in lines[:10]]
+    # "Х6", "Х5": a Cyrillic Х typed in a Latin model name
+    lines = [re.sub(r'(?<![А-Яа-яЁё])[ХхXx](?=\d)', 'X', l) for l in lines]
     for l in lines:
         s = clean(re.sub(r'[🚘☑️✅«»🏎🔥💥]', ' ', l))
         for pat, make in nz.BRANDS + MORE_BRANDS:
@@ -283,7 +289,7 @@ def dedupe(cars):
     return sorted(out, key=lambda d: d['id'])
 
 
-def source(channel, seller, keep_days=10, min_text=120, year_optional=False):
+def source(channel, seller, keep_days=10, min_text=120, year_optional=True):  # many posts give no year; a card shows none
     cfg = SimpleNamespace(CHANNEL=channel, SELLER=seller, KEEP_DAYS=keep_days, min_text=min_text, year_optional=year_optional)
     cfg.build = lambda posts: build(posts, cfg)
     return cfg
