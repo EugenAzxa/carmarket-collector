@@ -176,12 +176,18 @@ def cmd_indexnow(paths):
         urls = [SITE + '/' + p.lstrip('/') for p in paths]
     host = SITE.split('//', 1)[1]
     body = json.dumps({'host': host, 'key': INDEXNOW_KEY, 'keyLocation': f'{SITE}/{INDEXNOW_KEY}.txt', 'urlList': urls[:10000]}).encode()
-    req = urllib.request.Request('https://yandex.com/indexnow', data=body, method='POST', headers={'Content-Type': 'application/json; charset=utf-8', 'User-Agent': 'carmarket-deploy'})
-    try:
-        with urllib.request.urlopen(req, timeout=60) as r:
-            print('indexnow', r.status, len(urls), 'urls')
-    except urllib.error.HTTPError as e:
-        sys.exit(f'indexnow failed {e.code}: {e.read()[:300]!r}')
+    # Yandex for Russia, Bing for Bing itself and the AI search built on it (ChatGPT, Copilot, DuckDuckGo).
+    # IndexNow engines share submissions, sending to both is just insurance.
+    bad = []
+    for engine in ('https://yandex.com/indexnow', 'https://www.bing.com/indexnow'):
+        req = urllib.request.Request(engine, data=body, method='POST', headers={'Content-Type': 'application/json; charset=utf-8', 'User-Agent': 'carmarket-deploy'})
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                print('indexnow', engine.split('/')[2], r.status, len(urls), 'urls')
+        except urllib.error.HTTPError as e:
+            bad.append(f'{engine}: {e.code} {e.read()[:200]!r}')
+    if bad:
+        sys.exit('indexnow failed ' + '; '.join(bad))
 
 
 def main(a):
