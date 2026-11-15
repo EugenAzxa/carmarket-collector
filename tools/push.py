@@ -37,11 +37,18 @@ def token():
 
 def ours():
     """Never send the token to a host that is not our site (stale DNS, VPN cache, parking page)."""
-    try:
-        with urllib.request.urlopen(urllib.request.Request(SITE + '/robots.txt', headers={'User-Agent': 'carmarket-deploy'}), timeout=30) as r:
-            body = r.read(2000).decode('utf-8', 'replace')
-    except Exception as e:
-        sys.exit(f'site check failed: {e}')
+    # SpaceWeb sometimes answers 500 or resets the connection for a minute (15.11.2026 17:03-17:09),
+    # so try a few times before failing the whole run.
+    for attempt in range(5):
+        try:
+            with urllib.request.urlopen(urllib.request.Request(SITE + '/robots.txt', headers={'User-Agent': 'carmarket-deploy'}), timeout=30) as r:
+                body = r.read(2000).decode('utf-8', 'replace')
+            break
+        except Exception as e:
+            if attempt == 4:
+                sys.exit(f'site check failed: {e}')
+            print('site check retry after', e, file=sys.stderr)
+            time.sleep((10, 20, 40, 60)[attempt])
     if 'Sitemap: ' + SITE not in body:
         sys.exit('site check failed: ' + SITE + ' does not serve our robots.txt yet (DNS or VPN cache), token not sent')
 
